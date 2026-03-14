@@ -8,8 +8,6 @@ import java.awt.Font;
 import java.awt.GridLayout;
 import java.awt.event.ActionListener;
 import java.io.BufferedReader;
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -19,6 +17,7 @@ import java.io.PrintWriter;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.util.Base64;
 import java.util.HashMap;
 
 import javax.swing.BorderFactory;
@@ -51,21 +50,19 @@ public class ChatClientGUI {
 
     private BufferedReader in;
     private PrintWriter out;
-    private DataOutputStream dataOut; // Luồng riêng để gửi File
     private String clientName;
 
-    // Bộ nhớ tạm để lưu các file nhận được (ID File -> Dữ liệu Byte)
+    // Bộ nhớ tạm để lưu các file nhận được
     private final HashMap<String, byte[]> fileStorage = new HashMap<>();
 
     public ChatClientGUI() {
-        // Tối ưu hóa multicatch theo chuẩn của VS Code
         try {
             UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
         } catch (ClassNotFoundException | InstantiationException | IllegalAccessException | UnsupportedLookAndFeelException e) {
             e.printStackTrace();
         }
 
-        // --- 1. HEADER ---
+        // --- HEADER ---
         JPanel headerPanel = new JPanel(new BorderLayout());
         headerPanel.setBackground(new Color(86, 130, 163));
         headerPanel.setBorder(BorderFactory.createEmptyBorder(10, 15, 10, 15));
@@ -80,7 +77,7 @@ public class ChatClientGUI {
         headerPanel.add(titleLabel, BorderLayout.WEST);
         headerPanel.add(statusLabel, BorderLayout.EAST);
 
-        // --- 2. CHAT AREA ---
+        // --- CHAT AREA ---
         chatPane.setContentType("text/html");
         chatPane.setEditable(false);
         chatPane.setBackground(new Color(230, 235, 239));
@@ -89,7 +86,7 @@ public class ChatClientGUI {
         JScrollPane scrollPane = new JScrollPane(chatPane);
         scrollPane.setBorder(null);
 
-        // Xử lý sự kiện khi click vào link tải File
+        // Sự kiện click link tải File
         chatPane.addHyperlinkListener(e -> {
             if (e.getEventType() == HyperlinkEvent.EventType.ACTIVATED) {
                 String fileId = e.getDescription(); 
@@ -99,7 +96,7 @@ public class ChatClientGUI {
             }
         });
 
-        // --- 3. INPUT AREA ---
+        // --- INPUT AREA ---
         JPanel bottomPanel = new JPanel(new BorderLayout(10, 10));
         bottomPanel.setBackground(Color.WHITE);
         bottomPanel.setBorder(BorderFactory.createCompoundBorder(
@@ -109,7 +106,6 @@ public class ChatClientGUI {
 
         textField.setFont(new Font("Segoe UI", Font.PLAIN, 15));
 
-        // Khung chứa các nút Emoji và Attach
         JPanel actionPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
         actionPanel.setBackground(Color.WHITE);
 
@@ -149,7 +145,7 @@ public class ChatClientGUI {
         ActionListener sendListener = e -> {
             String msg = textField.getText();
             if (!msg.trim().isEmpty() && out != null) {
-                out.println("TEXT:" + clientName + ": " + msg); // Thêm prefix TEXT: để Server phân biệt
+                out.println("TEXT:" + clientName + ": " + msg);
                 textField.setText("");
             }
         };
@@ -192,11 +188,9 @@ public class ChatClientGUI {
                     return;
                 }
                 
-                // Gửi thông báo FILE lên Server bằng DataOutputStream
-                out.println("FILE:" + clientName + ": " + file.getName());
-                dataOut.writeInt(fileBytes.length);
-                dataOut.write(fileBytes);
-                dataOut.flush();
+                // Mã hóa toàn bộ File thành chuỗi Base64 an toàn để truyền tải
+                String base64String = Base64.getEncoder().encodeToString(fileBytes);
+                out.println("FILE:" + clientName + ":" + file.getName() + ":" + base64String);
 
             } catch (IOException ex) {
                 JOptionPane.showMessageDialog(frame, "Không thể đọc file!", "Lỗi", JOptionPane.ERROR_MESSAGE);
@@ -221,48 +215,64 @@ public class ChatClientGUI {
         }
     }
 
-    private void appendMessage(String sender, String message, boolean isFile, String fileId) {
+    private void appendMessage(String sender, String message, boolean isFile, String fileId, byte[] fileData) {
         SwingUtilities.invokeLater(() -> {
             try {
                 HTMLDocument doc = (HTMLDocument) chatPane.getDocument();
                 HTMLEditorKit kit = (HTMLEditorKit) chatPane.getEditorKit();
                 
                 StringBuilder htmlBuilder = new StringBuilder();
-
-                // FIX LỖI EFFECTIVELY FINAL TẠI ĐÂY: Dùng biến phụ displayMessage
                 String displayMessage = message;
 
+                // XỬ LÝ NẾU LÀ FILE HOẶC ẢNH
                 if (isFile) {
-                    displayMessage = "📁 <b>" + displayMessage + "</b><br>"
-                            + "<a href='" + fileId + "' style='color: #0056b3; text-decoration: none;'>⬇ Nhấn vào đây để tải về</a>";
+                    boolean isImage = message.toLowerCase().matches(".*\\.(png|jpg|jpeg|gif)$");
+                    
+                    if (isImage && fileData != null) {
+                        // Tạo file tạm để nhúng hiển thị ảnh lên JTextPane
+                        File tempFile = new File(System.getProperty("java.io.tmpdir"), fileId);
+                        Files.write(tempFile.toPath(), fileData);
+                        String fileUrl = tempFile.toURI().toURL().toString();
+                        
+                        displayMessage = "<br><img src='" + fileUrl + "' width='200'><br>"
+                                       + "<a href='" + fileId + "' style='color: #0056b3; font-size: 11px; text-decoration: none;'>⬇ Tải ảnh gốc</a>";
+                    } else {
+                        // File thông thường
+                        displayMessage = "📁 <b>" + message + "</b><br>"
+                                + "<a href='" + fileId + "' style='color: #0056b3; text-decoration: none;'>⬇ Nhấn vào đây để tải về</a>";
+                    }
                 }
 
+                // VẼ GIAO DIỆN BONG BÓNG CHAT (KÈM ĐƯỜNG VIỀN NGĂN CÁCH TÊN VÀ NỘI DUNG)
                 if (sender.equalsIgnoreCase("System")) {
                     htmlBuilder.append("<table width='100%'><tr><td align='center'>")
                                .append("<font face='Segoe UI, Arial' size='3' color='#888888'><i>")
                                .append(displayMessage)
                                .append("</i></font></td></tr></table><br>");
                 } else if (sender.equals(clientName)) {
+                    // Của mình (Không cần tên)
                     htmlBuilder.append("<table width='100%'><tr><td align='right'>")
-                               .append("<table bgcolor='#DCF8C6' cellpadding='8' cellspacing='0'><tr><td>")
+                               .append("<table bgcolor='#DCF8C6' cellpadding='8' cellspacing='0' style='border-radius: 5px;'><tr><td>")
                                .append("<font face='Segoe UI Emoji, Segoe UI, Arial' size='4' color='black'>")
                                .append(displayMessage)
                                .append("</font></td></tr></table></td></tr></table><br>");
                 } else {
+                    // Của người khác (Có viền phân tách tên)
                     htmlBuilder.append("<table width='100%'><tr><td align='left'>")
-                               .append("<table bgcolor='#FFFFFF' cellpadding='8' cellspacing='0'><tr><td>")
-                               .append("<font face='Segoe UI, Arial' size='3' color='#5682A3'><b>")
-                               .append(sender)
-                               .append("</b></font><br>")
+                               .append("<table bgcolor='#FFFFFF' cellpadding='0' cellspacing='0' width='250'>")
+                               .append("<tr><td style='border-bottom: 1px solid #E5E5E5; padding: 5px 8px;'>") // Viền ngăn cách
+                               .append("<font face='Segoe UI, Arial' size='3' color='#5682A3'><b>").append(sender).append("</b></font>")
+                               .append("</td></tr>")
+                               .append("<tr><td style='padding: 5px 8px;'>")
                                .append("<font face='Segoe UI Emoji, Segoe UI, Arial' size='4' color='black'>")
                                .append(displayMessage)
-                               .append("</font></td></tr></table></td></tr></table><br>");
+                               .append("</font></td></tr>")
+                               .append("</table></td></tr></table><br>");
                 }
                 
                 kit.insertHTML(doc, doc.getLength(), htmlBuilder.toString(), 0, 0, null);
                 chatPane.setCaretPosition(doc.getLength());
 
-            // FIX CẢNH BÁO HINTS BẰNG CÁCH DÙNG MULTICATCH
             } catch (javax.swing.text.BadLocationException | java.io.IOException e) {
                 e.printStackTrace();
             }
@@ -280,15 +290,11 @@ public class ChatClientGUI {
 
         new Thread(() -> {
             try {
-                Socket socket = new Socket("127.0.0.1", 6666);
+                // ĐỊA CHỈ IP MÁY CHỦ BẠN ĐÃ CẤU HÌNH
+                Socket socket = new Socket("10.0.8.100", 6666);
                 
-                // Ép chuẩn UTF-8 để hỗ trợ Emoji
                 in = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
                 out = new PrintWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), true);
-                
-                // Thêm luồng đọc Byte để xử lý File
-                DataInputStream dataIn = new DataInputStream(socket.getInputStream());
-                dataOut = new DataOutputStream(socket.getOutputStream());
 
                 SwingUtilities.invokeLater(() -> statusLabel.setText("🟢 Online: " + clientName));
                 out.println("TEXT:System: " + clientName + " đã tham gia phòng chat!");
@@ -296,39 +302,37 @@ public class ChatClientGUI {
                 String line;
                 while ((line = in.readLine()) != null) {
                     if (line.startsWith("TEXT:")) {
-                        // Xử lý Text bình thường
                         String actualMessage = line.substring(5); 
                         String[] parts = actualMessage.split(": ", 2);
                         if (parts.length == 2) {
-                            appendMessage(parts[0], parts[1], false, null);
+                            appendMessage(parts[0], parts[1], false, null, null);
                         } else {
-                            appendMessage("System", actualMessage, false, null);
+                            appendMessage("System", actualMessage, false, null, null);
                         }
                     } else if (line.startsWith("FILE:")) {
-                        // Xử lý luồng File
-                        String actualMessage = line.substring(5);
-                        String[] parts = actualMessage.split(": ", 2);
-                        if (parts.length == 2) {
+                        // Giải mã chuỗi Base64 trả về thành File
+                        String payload = line.substring(5);
+                        String[] parts = payload.split(":", 3);
+                        if (parts.length == 3) {
                             String sender = parts[0];
                             String fileName = parts[1];
+                            String base64Data = parts[2];
                             
-                            // Đọc kích thước file
-                            int fileLength = dataIn.readInt();
-                            if (fileLength > 0) {
-                                byte[] fileData = new byte[fileLength];
-                                dataIn.readFully(fileData, 0, fileData.length); // Đọc trọn vẹn byte của file
-                                
+                            try {
+                                byte[] fileData = Base64.getDecoder().decode(base64Data);
                                 String fileId = System.currentTimeMillis() + "_" + fileName;
                                 fileStorage.put(fileId, fileData);
                                 
-                                appendMessage(sender, fileName, true, fileId);
+                                appendMessage(sender, fileName, true, fileId, fileData);
+                            } catch (Exception e) {
+                                e.printStackTrace();
                             }
                         }
                     }
                 }
             } catch (IOException ex) {
                 SwingUtilities.invokeLater(() -> statusLabel.setText("🔴 Mất kết nối"));
-                appendMessage("System", "Mất kết nối tới máy chủ.", false, null);
+                appendMessage("System", "Mất kết nối tới máy chủ.", false, null, null);
             }
         }).start();
     }
