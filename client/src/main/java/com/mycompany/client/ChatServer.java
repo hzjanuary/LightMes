@@ -3,9 +3,11 @@ package com.mycompany.client;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -33,8 +35,9 @@ public class ChatServer {
         @Override 
         public void run() {
             try {
-                in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-                out = new PrintWriter(socket.getOutputStream(), true);
+                // ÉP CHUẨN UTF-8 ĐỂ KHÔNG BỊ LỖI FONT EMOJI
+                in = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+                out = new PrintWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), true);
                 
                 // Add new client to the broadcast list
                 synchronized (clientWriters) {
@@ -45,15 +48,25 @@ public class ChatServer {
                 // Receive message from a Client
                 while ((message = in.readLine()) != null) {
                     
-                    // Split the string based on ": " sent by the Client
                     String[] parts = message.split(": ", 2); 
                     
                     if (parts.length == 2) {
-                        String userName = parts[0]; // User name part
-                        String content = parts[1];  // Message content part
-                        System.out.println("[RECEIVE] User [" + userName + "] sent: " + content);
+                        String userName = parts[0]; 
+                        String content = parts[1];  
+                        
+                        // --- KIỂM TRA ĐỂ KHÔNG IN CHUỖI BASE64 CỦA FILE RA CONSOLE ---
+                        if (content.startsWith("[FILE]:")) {
+                            // Cắt lấy tên file để log cho gọn
+                            String[] fileParts = content.split(":", 3);
+                            String fileName = (fileParts.length >= 2) ? fileParts[1] : "unknown_file";
+                            System.out.println("[RECEIVE] User [" + userName + "] sent a file: " + fileName);
+                        } else {
+                            // Nếu là tin nhắn text thường thì in ra bình thường
+                            System.out.println("[RECEIVE] User [" + userName + "] sent: " + content);
+                        }
+                        // -------------------------------------------------------------
+                        
                     } else {
-                        // Fallback in case a system message doesn't have ": "
                         System.out.println("[RECEIVE] " + message);
                     }
 
