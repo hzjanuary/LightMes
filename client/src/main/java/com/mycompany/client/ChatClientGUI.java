@@ -42,18 +42,19 @@ public class ChatClientGUI {
     private final JFrame     frame        = new JFrame("LightMes");
     private final JTextPane  chatPane     = new JTextPane();
     private final JTextField textField    = new JTextField();
-    private final JButton    sendButton   = new JButton("Gui >");
+    private final JButton    sendButton   = new JButton("Send >");
     private final JButton    emojiButton  = new JButton("Emoji");
     private final JButton    attachButton = new JButton("File");
-    private final JLabel     statusLabel  = new JLabel("  Dang ket noi...");
+    private final JLabel     statusLabel  = new JLabel("  Connecting...");
     private final JLabel     titleLabel   = new JLabel("LightMes Chat");
 
     // Sidebar
     private final DefaultListModel<String> userListModel = new DefaultListModel<>();
     private final JList<String> userList = new JList<>(userListModel);
-    private final JButton allChatButton = new JButton("\uD83C\uDF10 Tất cả");
-    private final JButton logoutButton  = new JButton("\uD83D\uDEAA Đăng xuất");
-    private final JLabel chatTargetLabel = new JLabel("# Tất cả");
+    private final JButton allChatButton = new JButton("All Chat");
+    private final JButton logoutButton  = new JButton("Logout");
+    private final JButton refreshButton = new JButton("Refresh");
+    private final JLabel chatTargetLabel = new JLabel("# All");
 
     // State
     private PrintWriter out;
@@ -193,15 +194,37 @@ public class ChatClientGUI {
         allChatButton.setHorizontalAlignment(SwingConstants.LEFT);
         allChatButton.addActionListener(e -> switchTarget(TARGET_ALL));
 
-        JPanel topSection = new JPanel(new BorderLayout());
-        topSection.setBackground(CLR_SIDEBAR_BG);
-        topSection.add(allChatButton, BorderLayout.NORTH);
+        // --- Refresh button ---
+        refreshButton.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        refreshButton.setForeground(Color.WHITE);
+        refreshButton.setBackground(new Color(56, 142, 60));
+        refreshButton.setBorderPainted(false);
+        refreshButton.setFocusPainted(false);
+        refreshButton.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        refreshButton.setBorder(BorderFactory.createEmptyBorder(8, 14, 8, 14));
+        refreshButton.setHorizontalAlignment(SwingConstants.LEFT);
+        refreshButton.addActionListener(e -> requestRefreshUsers());
 
-        JLabel onlineLabel = new JLabel("  \uD83D\uDC65 Online");
-        onlineLabel.setFont(new Font("Segoe UI Emoji", Font.BOLD, 11));
+        JPanel topSection = new JPanel();
+        topSection.setLayout(new BoxLayout(topSection, BoxLayout.Y_AXIS));
+        topSection.setBackground(CLR_SIDEBAR_BG);
+
+        // Make buttons fill the width
+        allChatButton.setMaximumSize(new Dimension(Integer.MAX_VALUE, allChatButton.getPreferredSize().height));
+        allChatButton.setAlignmentX(Component.LEFT_ALIGNMENT);
+        refreshButton.setMaximumSize(new Dimension(Integer.MAX_VALUE, refreshButton.getPreferredSize().height));
+        refreshButton.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        topSection.add(allChatButton);
+        topSection.add(refreshButton);
+
+        JLabel onlineLabel = new JLabel("  Online");
+        onlineLabel.setFont(new Font("Segoe UI", Font.BOLD, 11));
         onlineLabel.setForeground(new Color(160, 180, 210));
         onlineLabel.setBorder(BorderFactory.createEmptyBorder(10, 4, 5, 4));
-        topSection.add(onlineLabel, BorderLayout.SOUTH);
+        onlineLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        onlineLabel.setMaximumSize(new Dimension(Integer.MAX_VALUE, onlineLabel.getPreferredSize().height));
+        topSection.add(onlineLabel);
 
         sidebar.add(topSection, BorderLayout.NORTH);
 
@@ -294,7 +317,7 @@ public class ChatClientGUI {
 
         // Update header
         if (TARGET_ALL.equals(target)) {
-            chatTargetLabel.setText("# Tất cả");
+            chatTargetLabel.setText("# All");
             allChatButton.setBackground(CLR_SIDEBAR_ACTIVE);
         } else {
             chatTargetLabel.setText("→ " + target);
@@ -328,9 +351,9 @@ public class ChatClientGUI {
         } else {
             resetChat();
             if (TARGET_ALL.equals(target)) {
-                appendSystemMsg("Chào mừng đến phòng chat chung! \uD83C\uDF10");
+                appendSystemMsg("Welcome to the public chat room!");
             } else {
-                appendSystemMsg("Bắt đầu cuộc trò chuyện với " + target + " \uD83D\uDCAC");
+                appendSystemMsg("Starting conversation with " + target);
             }
         }
     }
@@ -403,7 +426,7 @@ public class ChatClientGUI {
     private void sendFile() {
         if (out == null) {
             JOptionPane.showMessageDialog(frame,
-                "Chua ket noi toi server!", "Loi", JOptionPane.ERROR_MESSAGE);
+                "Not connected to server!", "Error", JOptionPane.ERROR_MESSAGE);
             return;
         }
         JFileChooser fc = new JFileChooser();
@@ -416,7 +439,7 @@ public class ChatClientGUI {
                 if (bytes.length > MAX_FILE_BYTES) {
                     SwingUtilities.invokeLater(() ->
                         JOptionPane.showMessageDialog(frame,
-                            "File qua lon! Gioi han 10 MB.", "Loi", JOptionPane.ERROR_MESSAGE));
+                            "File too large! Max 10 MB.", "Error", JOptionPane.ERROR_MESSAGE));
                     return;
                 }
                 String b64 = Base64.getEncoder().encodeToString(bytes);
@@ -426,12 +449,12 @@ public class ChatClientGUI {
                     // For private file sending, we use the PRIVATE prefix with FILE content
                     out.println("PRIVATE:" + clientName + ":" + currentTarget + ":FILE:" + file.getName() + ":" + b64);
                 }
-                appendSystemMsg("Da gui: " + file.getName()
+                appendSystemMsg("Sent: " + file.getName()
                     + " (" + bytes.length / 1024 + " KB)");
             } catch (IOException ex) {
                 SwingUtilities.invokeLater(() ->
                     JOptionPane.showMessageDialog(frame,
-                        "Khong the doc file: " + ex.getMessage(), "Loi",
+                        "Cannot read file: " + ex.getMessage(), "Error",
                         JOptionPane.ERROR_MESSAGE));
             }
         }, "file-sender").start();
@@ -445,12 +468,25 @@ public class ChatClientGUI {
         if (fc.showSaveDialog(frame) == JFileChooser.APPROVE_OPTION) {
             try (FileOutputStream fos = new FileOutputStream(fc.getSelectedFile())) {
                 fos.write(data);
-                JOptionPane.showMessageDialog(frame, "Da luu file thanh cong!", "Thanh cong",
+                JOptionPane.showMessageDialog(frame, "File saved successfully!", "Success",
                     JOptionPane.INFORMATION_MESSAGE);
             } catch (IOException e) {
-                JOptionPane.showMessageDialog(frame, "Loi khi luu file: " + e.getMessage(),
-                    "Loi", JOptionPane.ERROR_MESSAGE);
+                JOptionPane.showMessageDialog(frame, "Error saving file: " + e.getMessage(),
+                    "Error", JOptionPane.ERROR_MESSAGE);
             }
+        }
+    }
+
+    // =========================================================================
+    // Refresh users
+    // =========================================================================
+    private void requestRefreshUsers() {
+        if (out != null && connected) {
+            out.println("REFRESH_USERS");
+            appendSystemMsg("Refreshing user list...");
+        } else {
+            JOptionPane.showMessageDialog(frame,
+                "Not connected to server!", "Error", JOptionPane.ERROR_MESSAGE);
         }
     }
 
@@ -459,7 +495,7 @@ public class ChatClientGUI {
     // =========================================================================
     private void doLogout() {
         int confirm = JOptionPane.showConfirmDialog(frame,
-            "Bạn có chắc muốn đăng xuất?", "Đăng xuất",
+            "Are you sure you want to logout?", "Logout",
             JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
         if (confirm != JOptionPane.YES_OPTION) return;
 
@@ -482,10 +518,10 @@ public class ChatClientGUI {
             unreadMap.clear();
             userListModel.clear();
             currentTarget = TARGET_ALL;
-            chatTargetLabel.setText("# Tất cả");
+            chatTargetLabel.setText("# All");
             allChatButton.setBackground(CLR_SIDEBAR_ACTIVE);
             resetChat();
-            statusLabel.setText("  Đã đăng xuất");
+            statusLabel.setText("  Logged out");
             statusLabel.setForeground(CLR_STATUS_OFF);
             titleLabel.setText("LightMes Chat");
             frame.setTitle("LightMes");
@@ -532,14 +568,14 @@ public class ChatClientGUI {
                 String url = tmp.toURI().toURL().toString();
                 return "<img src='" + url + "' width='200'><br>"
                      + "<a href='" + fileId + "' style='color:#1A56A0;font-size:11px;'>"
-                     + "Tai anh goc</a>";
+                     + "Download original</a>";
             } catch (IOException ex) {
                 // fall through to generic display
             }
         }
         return "<b>" + escHtml(fileName) + "</b><br>"
              + "<a href='" + fileId + "' style='color:#1A56A0;'>"
-             + "Nhan de tai ve</a>";
+             + "Click to download</a>";
     }
 
     private void appendToChat(String sender, String text,
@@ -600,17 +636,17 @@ public class ChatClientGUI {
     // =========================================================================
     private void connectToServer() {
         while (true) {
-            // 1. Hiện form login/register
+            // 1. Show login/register form
             JPanel authPanel = new JPanel(new GridLayout(3, 2, 8, 8));
             JTextField userField = new JTextField(16);
             JPasswordField passField = new JPasswordField(16);
-            String[] options = {"Đăng nhập", "Đăng ký"};
+            String[] options = {"Login", "Register"};
             JComboBox<String> modeBox = new JComboBox<>(options);
-            authPanel.add(new JLabel("Tài khoản:")); authPanel.add(userField);
-            authPanel.add(new JLabel("Mật khẩu:"));  authPanel.add(passField);
-            authPanel.add(new JLabel("Chế độ:"));    authPanel.add(modeBox);
+            authPanel.add(new JLabel("Username:")); authPanel.add(userField);
+            authPanel.add(new JLabel("Password:"));  authPanel.add(passField);
+            authPanel.add(new JLabel("Mode:"));    authPanel.add(modeBox);
             
-            int ok = JOptionPane.showConfirmDialog(frame, authPanel, "Đăng nhập/Đăng ký", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+            int ok = JOptionPane.showConfirmDialog(frame, authPanel, "Login / Register", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
             if (ok != JOptionPane.OK_OPTION) System.exit(0);
             
             String username = userField.getText().trim();
@@ -618,11 +654,11 @@ public class ChatClientGUI {
             boolean isRegister = modeBox.getSelectedIndex() == 1;
             
             if (username.isEmpty() || password.isEmpty()) {
-                JOptionPane.showMessageDialog(frame, "Vui lòng nhập đủ tài khoản và mật khẩu!", "Thiếu thông tin", JOptionPane.ERROR_MESSAGE);
+                JOptionPane.showMessageDialog(frame, "Please enter both username and password!", "Missing info", JOptionPane.ERROR_MESSAGE);
                 continue;
             }
 
-            // 2. Nhập IP/port
+            // 2. Enter IP/port
             JTextField ipField   = new JTextField("127.0.0.1", 17);
             JTextField portField = new JTextField("6666", 7);
             JPanel addrPanel = new JPanel(new GridLayout(2, 2, 8, 8));
@@ -630,35 +666,35 @@ public class ChatClientGUI {
             addrPanel.add(new JLabel("Server IP:"));  addrPanel.add(ipField);
             addrPanel.add(new JLabel("Port:"));        addrPanel.add(portField);
             
-            int choice = JOptionPane.showConfirmDialog(frame, addrPanel, "Kết nối tới Server", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+            int choice = JOptionPane.showConfirmDialog(frame, addrPanel, "Connect to Server", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
             if (choice != JOptionPane.OK_OPTION) continue;
             
             String ip = ipField.getText().trim().isEmpty() ? "127.0.0.1" : ipField.getText().trim();
             int port = 6666;
             try { port = Integer.parseInt(portField.getText().trim()); } catch (NumberFormatException ignored) {}
 
-            // 3. Kết nối và xác thực
+            // 3. Connect and authenticate
             try {
                 Socket socket = new Socket();
                 socket.connect(new InetSocketAddress(ip, port), 5000);
                 
-                // Đặt timeout đọc để không bị treo vô hạn khi chờ phản hồi xác thực
+                // Set read timeout to avoid hanging indefinitely waiting for auth response
                 socket.setSoTimeout(10000);
                 
                 BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
                 out = new PrintWriter(new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8)), true);
                 
-                // Gửi lệnh xác thực
+                // Send auth command
                 if (isRegister) {
                     out.println("AUTH:REGISTER:" + username + ":" + password);
                 } else {
                     out.println("AUTH:LOGIN:" + username + ":" + password);
                 }
                 
-                // Đợi phản hồi xác thực
+                // Wait for auth response
                 String resp = reader.readLine();
                 if (resp != null && resp.equals("AUTH:OK")) {
-                    // Tắt timeout để chat bình thường (đọc blocking)
+                    // Disable timeout for normal chat (blocking reads)
                     socket.setSoTimeout(0);
                     
                     clientName = username;
@@ -671,12 +707,12 @@ public class ChatClientGUI {
                         statusLabel.setText("Online: " + clientName);
                         statusLabel.setForeground(CLR_STATUS_ON);
                         resetChat();
-                        appendSystemMsg("Chào mừng đến phòng chat chung! \uD83C\uDF10");
+                        appendSystemMsg("Welcome to the public chat room!");
                     });
                     
-                    out.println("TEXT:System: " + clientName + " đã tham gia phòng chat!");
+                    out.println("TEXT:System: " + clientName + " has joined the chat!");
                     
-                    // Bắt đầu luồng nhận tin nhắn
+                    // Start message receiver thread
                     new Thread(() -> {
                         try {
                             String line;
@@ -690,28 +726,28 @@ public class ChatClientGUI {
                         }
                     }, "reader-thread").start();
                     
-                    break; // Thoát vòng lặp while(true) khi thành công
+                    break; // Exit the while(true) loop on success
                 } else {
                     socket.close();
                     out = null;
-                    JOptionPane.showMessageDialog(frame, isRegister ? "Đăng ký thất bại! Tài khoản có thể đã tồn tại." : "Sai tài khoản hoặc mật khẩu!", "Lỗi xác thực", JOptionPane.ERROR_MESSAGE);
+                    JOptionPane.showMessageDialog(frame, isRegister ? "Registration failed! Account may already exist." : "Wrong username or password!", "Auth Error", JOptionPane.ERROR_MESSAGE);
                 }
             } catch (SocketTimeoutException ex) {
                 out = null;
-                JOptionPane.showMessageDialog(frame, "Server không phản hồi. Vui lòng thử lại.", "Hết thời gian chờ", JOptionPane.ERROR_MESSAGE);
+                JOptionPane.showMessageDialog(frame, "Server not responding. Please try again.", "Timeout", JOptionPane.ERROR_MESSAGE);
             } catch (IOException ex) {
                 out = null;
-                JOptionPane.showMessageDialog(frame, "Không thể kết nối tới server: " + ex.getMessage(), "Lỗi kết nối", JOptionPane.ERROR_MESSAGE);
+                JOptionPane.showMessageDialog(frame, "Cannot connect to server: " + ex.getMessage(), "Connection Error", JOptionPane.ERROR_MESSAGE);
             }
         }
     }
 
     private void handleDisconnect(String error) {
         SwingUtilities.invokeLater(() -> {
-            statusLabel.setText("Mất kết nối");
+            statusLabel.setText("Disconnected");
             statusLabel.setForeground(CLR_STATUS_OFF);
         });
-        appendSystemMsg("Mất kết nối tới server: " + error);
+        appendSystemMsg("Disconnected from server: " + error);
         out = null;
         connected = false;
     }
@@ -772,7 +808,7 @@ public class ChatClientGUI {
                         markUnread(conversationWith);
                     }
                 } catch (IllegalArgumentException e) {
-                    appendSystemMsg("Loi giai ma file tu " + sender);
+                    appendSystemMsg("Error decoding file from " + sender);
                 }
             } else {
                 // Regular private text message
@@ -825,7 +861,7 @@ public class ChatClientGUI {
                     markUnread(TARGET_ALL);
                 }
             } catch (IllegalArgumentException e) {
-                appendSystemMsg("Loi giai ma file '" + fileName + "' tu " + sender);
+                appendSystemMsg("Error decoding file '" + fileName + "' from " + sender);
             }
         }
     }
@@ -894,7 +930,7 @@ public class ChatClientGUI {
             SwingUtilities.invokeLater(() -> {
                 if (TARGET_ALL.equals(target)) {
                     allChatButton.setForeground(CLR_UNREAD);
-                    allChatButton.setText("● \uD83C\uDF10 Tất cả");
+                    allChatButton.setText("● All Chat");
                 }
                 userList.repaint();
             });
@@ -913,7 +949,7 @@ public class ChatClientGUI {
             client.frame.setLocationRelativeTo(null);
             client.frame.setVisible(true);
             
-            // Chạy việc kết nối trong một luồng riêng để không làm treo giao diện (EDT)
+            // Run connection in a separate thread to avoid blocking the EDT
             new Thread(client::connectToServer, "connection-thread").start();
         });
     }

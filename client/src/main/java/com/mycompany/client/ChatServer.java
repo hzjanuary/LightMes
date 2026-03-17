@@ -18,7 +18,7 @@ public class ChatServer {
         int port = 6666;
         if (args.length > 0) {
             try { port = Integer.parseInt(args[0]); }
-            catch (NumberFormatException e) { System.err.println("[WARN] Port không hợp lệ, dùng mặc định 6666"); }
+            catch (NumberFormatException e) { System.err.println("[WARN] Invalid port, using default 6666"); }
         }
 
         System.out.println("╔══════════════════════════════════════╗");
@@ -37,13 +37,13 @@ public class ChatServer {
                     InetAddress addr = addrs.nextElement();
                     if (addr instanceof Inet4Address) {
                         System.out.println("[INFO] LAN IP: " + addr.getHostAddress()
-                                + "  ← Client dùng IP này để kết nối");
+                                + "  <- Clients use this IP to connect");
                     }
                 }
             }
         } catch (SocketException ignored) {}
 
-        System.out.println("[INFO] Đang lắng nghe kết nối...\n");
+        System.out.println("[INFO] Listening for connections...\n");
 
         try (ServerSocket server = new ServerSocket(port)) {
             server.setReuseAddress(true);
@@ -51,11 +51,11 @@ public class ChatServer {
                 Socket socket = server.accept();
                 ClientHandler handler = new ClientHandler(socket);
                 handler.start();
-                System.out.println(ts() + " [+] Kết nối mới: "
+                System.out.println(ts() + " [+] New connection: "
                         + socket.getRemoteSocketAddress());
             }
         } catch (IOException e) {
-            System.err.println("[FATAL] Server lỗi: " + e.getMessage());
+            System.err.println("[FATAL] Server error: " + e.getMessage());
             System.exit(1);
         }
     }
@@ -89,10 +89,10 @@ public class ChatServer {
 
     static void removeClient(ClientHandler h) {
         if (clients.remove(h) != null) {
-            System.out.println(ts() + " [-] Ngắt kết nối: " + h.displayName
-                    + "  |  Còn lại: " + clients.size());
+            System.out.println(ts() + " [-] Disconnected: " + h.displayName
+                    + "  |  Remaining: " + clients.size());
             // Notify remaining clients
-            broadcast("TEXT:System: " + h.displayName + " đã rời phòng chat.");
+            broadcast("TEXT:System: " + h.displayName + " has left the chat.");
             broadcastUserList();
         }
     }
@@ -126,7 +126,7 @@ public class ChatServer {
             try (
                 BufferedReader reader = new BufferedReader(new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))
             ) {
-                // 1. Xác thực — ghi phản hồi ĐỒNG BỘ để tránh race condition
+                // 1. Authentication — write response SYNCHRONOUSLY to avoid race condition
                 BufferedWriter authWriter = new BufferedWriter(
                         new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8));
                 
@@ -153,7 +153,7 @@ public class ChatServer {
                     System.err.println(ts() + " [AUTH] No AUTH line or wrong format: " + authLine);
                 }
                 
-                // Ghi phản hồi xác thực trực tiếp (đồng bộ, không qua queue)
+                // Write auth response directly (synchronous, not via queue)
                 if (authed) {
                     authWriter.write("AUTH:OK");
                     authWriter.newLine();
@@ -161,9 +161,9 @@ public class ChatServer {
                     
                     displayName = authLine.split(":", 4)[2];
                     clients.put(this, Boolean.TRUE);
-                    System.out.println(ts() + " [INFO] " + displayName + " đã gia nhập chat. Tổng: " + clients.size());
+                    System.out.println(ts() + " [INFO] " + displayName + " joined chat. Total: " + clients.size());
                     
-                    // Chỉ khởi động writer thread SAU KHI xác thực thành công
+                    // Only start writer thread AFTER successful authentication
                     writerThread = startWriterThread();
 
                     // Broadcast user list to all clients
@@ -176,7 +176,7 @@ public class ChatServer {
                     return;
                 }
                 
-                // 2. Sau khi xác thực thành công, vào chat
+                // 2. After successful authentication, enter chat
                 String line;
                 while ((line = reader.readLine()) != null) {
                     logIncoming(line);
@@ -187,7 +187,10 @@ public class ChatServer {
                     } else if (line.startsWith("LOGOUT:")) {
                         // Client requested logout
                         System.out.println(ts() + " [LOGOUT] " + displayName);
-                        break; // Exit read loop → finally will clean up
+                        break; // Exit read loop -> finally will clean up
+                    } else if (line.equals("REFRESH_USERS")) {
+                        // Client requested user list refresh
+                        broadcastUserList();
                     } else {
                         // Public messages (TEXT:, FILE:) → broadcast to all
                         broadcast(line);
@@ -220,7 +223,7 @@ public class ChatServer {
             // Send to target
             if (!sendTo(target, line)) {
                 // Target not online — notify sender
-                sendTo(sender, "TEXT:System: Người dùng '" + target + "' không trực tuyến.");
+                sendTo(sender, "TEXT:System: User '" + target + "' is not online.");
             }
             // Also echo back to sender so they see their own message
             sendTo(sender, line);
